@@ -1,10 +1,12 @@
 
 
 #include <SPI.h>
+#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 #include <DHT.h>
 #include <EEPROM.h>
+#include <MPU6050.h>
 
 // ----------- TFT CONFIG -------------
 #define TFT1_CS   5
@@ -17,7 +19,7 @@
 
 #define TFT_MOSI 23
 #define TFT_CLK  18
-#define TFT_MISO 19  // not used
+#define TFT_MISO 19
 
 Adafruit_ILI9341 tft1 = Adafruit_ILI9341(TFT1_CS, TFT1_DC, TFT1_RST);
 Adafruit_ILI9341 tft2 = Adafruit_ILI9341(TFT2_CS, TFT2_DC, TFT2_RST);
@@ -28,30 +30,31 @@ Adafruit_ILI9341 tft2 = Adafruit_ILI9341(TFT2_CS, TFT2_DC, TFT2_RST);
 #define DHTPIN 27
 #define DHTTYPE DHT22
 
-// Voltage divider values
+// Voltage divider
 float R1 = 30000.0, R2 = 7500.0, refVoltage = 3.3;
 int adcMax = 4095;
 
 // Battery thresholds
 float lowVoltage = 10.5, highVoltage = 12.6;
+float highCurrentThreshold = 10.0; // Ampere limit for high usage alert
 
 // Battery Capacity
 float ratedCapacity = 2000.0, measuredCapacity = 0.0;
 int cycleCount = 0, lastSOC = 100;
 float batteryHealth = 100.0;
 
-// EEPROM size
+// EEPROM
 #define EEPROM_SIZE 64
-
-// Driver Behavior
-float lastCurrent = 0;
-int harshAccelCount = 0;
-int harshBrakeCount = 0;
-int overspeedCount = 0;
-unsigned long lastDriverUpdate = 0;
 
 DHT dht(DHTPIN, DHTTYPE);
 unsigned long lastUpdate = 0;
+
+// MPU6050
+MPU6050 mpu;
+int16_t ax, ay, az;   // FIX: must be int16_t
+float accelThreshold = 2.0; // g-force threshold for rash driving
+bool rashDriving = false;
+bool highCurrent = false;
 
 void setup() {
   EEPROM.begin(EEPROM_SIZE);
@@ -67,6 +70,10 @@ void setup() {
   tft1.setRotation(1);
   tft2.setRotation(1);
 
+  // Init MPU6050
+  Wire.begin(33, 32); 
+  mpu.initialize();
+
   // Startup screens
   tft1.fillScreen(ILI9341_BLACK);
   tft1.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
@@ -78,7 +85,7 @@ void setup() {
   tft2.setTextSize(2);
   tft2.println("Alerts Display");
 
-  delay(2000);
+  delay(1000);
   tft1.fillScreen(ILI9341_BLACK);
   tft2.fillScreen(ILI9341_BLACK);
 }
@@ -92,7 +99,9 @@ float readBatteryVoltage() {
 float readBatteryCurrent() {
   int adcValue = analogRead(CURRENT_PIN);
   float voltage = (adcValue * refVoltage) / adcMax;
-  return (voltage / refVoltage) * 20.0; // 0–20A simulated
+  float current = (voltage / refVoltage) * 20.0; // simulated
+  highCurrent = (current > highCurrentThreshold);
+  return current;
 }
 
 int estimateSOC(float voltage) {
@@ -107,15 +116,22 @@ void saveToEEPROM() {
   EEPROM.commit();
 }
 
+void checkRashDriving() {
+  mpu.getAcceleration(&ax, &ay, &az);
+  // Convert raw readings to 'g'
+  float totalAccel = sqrt((float)ax * ax + (float)ay * ay + (float)az * az) / 16384.0;
+  rashDriving = (totalAccel > accelThreshold);
+}
+
 void displayParameters(float voltage, float current, float tempC, float humid, int soc) {
   tft1.fillScreen(ILI9341_BLACK);
-  tft1.setCursor(10, 20);  tft1.print("Voltage: "); tft1.print(voltage); tft1.println(" V");
-  tft1.setCursor(10, 50);  tft1.print("Current: "); tft1.print(current); tft1.println(" A");
-  tft1.setCursor(10, 80);  tft1.print("Temp: "); tft1.print(tempC); tft1.println(" C");
-  tft1.setCursor(10, 110); tft1.print("Humidity: "); tft1.print(humid); tft1.println(" %");
-  tft1.setCursor(10, 140); tft1.print("SOC: "); tft1.print(soc); tft1.println(" %");
-  tft1.setCursor(10, 170); tft1.print("Cycles: "); tft1.println(cycleCount);
-  tft1.setCursor(10, 200); tft1.print("Health: "); tft1.print(batteryHealth); tft1.println(" %");
+  tft1.setCursor(10, 20);  tft1.printf("Voltage: %.2f V", voltage);
+  tft1.setCursor(10, 50);  tft1.printf("Current: %.2f A", current);
+  tft1.setCursor(10, 80);  tft1.printf("Temp: %.1f C", tempC);
+  tft1.setCursor(10, 110); tft1.printf("Humidity: %.1f %%", humid);
+  tft1.setCursor(10, 140); tft1.printf("SOC: %d %%", soc);
+  tft1.setCursor(10, 170); tft1.printf("Cycles: %d", cycleCount);
+  tft1.setCursor(10, 200); tft1.printf("Health: %.1f %%", batteryHealth);
 }
 
 void displayAlerts(float voltage, float tempC, float humid) {
@@ -123,47 +139,38 @@ void displayAlerts(float voltage, float tempC, float humid) {
   tft2.setTextSize(2);
   tft2.setCursor(10, 30);
 
+  bool alertShown = false;
+
   if (tempC > 45) {
     tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
     tft2.println("ALERT: Overheat!");
+    alertShown = true;
   }
   if (voltage < lowVoltage) {
     tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
     tft2.println("ALERT: Low Voltage!");
+    alertShown = true;
   }
   if (humid > 90) {
     tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
     tft2.println("ALERT: High Humidity!");
+    alertShown = true;
+  }
+  if (rashDriving) {
+    tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
+    tft2.println("ALERT: Rash Driving!");
+    alertShown = true;
+  }
+  if (highCurrent) {
+    tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
+    tft2.println("ALERT: High Batt Usage!");
+    alertShown = true;
   }
 
-  // If no alerts
-  if (tempC <= 45 && voltage >= lowVoltage && humid <= 90) {
+  if (!alertShown) {
     tft2.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
     tft2.println("All Systems Normal");
   }
-
-  // Show driver behavior
-  tft2.setCursor(10, 120);
-  tft2.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
-  tft2.println("Driver Behavior:");
-  tft2.setCursor(10, 150); tft2.print("Accel: "); tft2.println(harshAccelCount);
-  tft2.setCursor(10, 170); tft2.print("Brake: "); tft2.println(harshBrakeCount);
-  tft2.setCursor(10, 190); tft2.print("Overspeed: "); tft2.println(overspeedCount);
-}
-
-void detectDriverBehavior(float current, float voltage) {
-  unsigned long now = millis();
-  if (now - lastDriverUpdate < 1000) return; // update every sec
-  lastDriverUpdate = now;
-
-  float deltaCurrent = current - lastCurrent;
-  lastCurrent = current;
-
-  if (deltaCurrent > 5.0) harshAccelCount++;
-  if (deltaCurrent < -5.0) harshBrakeCount++;
-
-  // Fake overspeed detection (SOC + voltage relation)
-  if (voltage > 12.5) overspeedCount++;
 }
 
 void loop() {
@@ -178,7 +185,6 @@ void loop() {
   lastUpdate = now;
   measuredCapacity += current * 1000 * dt;
 
-  // Cycle detection
   if (lastSOC > 90 && soc < 20) cycleCount++;
   if (lastSOC < 20 && soc > 90) {
     batteryHealth -= 0.05;
@@ -188,10 +194,7 @@ void loop() {
   }
   lastSOC = soc;
 
-  // Driver behavior check
-  detectDriverBehavior(current, voltage);
-
-  // Update displays
+  checkRashDriving();
   displayParameters(voltage, current, tempC, humid, soc);
   displayAlerts(voltage, tempC, humid);
 
