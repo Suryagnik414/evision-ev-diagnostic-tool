@@ -89,7 +89,7 @@ EV-Diagnostic-Tool/
 ## 📷 Screenshots / Demo  
 - **GitHub Repo:** https://github.com/Suryagnik414/evision-ev-diagnostic-tool
 - **YouTube Demo prototype :** https://youtu.be/JreFqKJ2MZE?si=HU6j838CFf0SP1JI
-**YouTube Demo ppt :**  uploading soon
+**YouTube Demo ppt :**  https://youtu.be/IGw1qlSi9UM?si=fPUv4aLHP--D5Df5
   
 
 ---
