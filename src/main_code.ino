@@ -1,7 +1,7 @@
 /***************************************************
    IoT EV Diagnostic Tool - ESP32 + Dual ILI9341 TFT
    TFT1: Parameters
-   TFT2: Alerts
+   TFT2: Alerts + Driver Behavior
 ***************************************************/
 
 #include <SPI.h>
@@ -46,6 +46,13 @@ float batteryHealth = 100.0;
 
 // EEPROM size
 #define EEPROM_SIZE 64
+
+// Driver Behavior
+float lastCurrent = 0;
+int harshAccelCount = 0;
+int harshBrakeCount = 0;
+int overspeedCount = 0;
+unsigned long lastDriverUpdate = 0;
 
 DHT dht(DHTPIN, DHTTYPE);
 unsigned long lastUpdate = 0;
@@ -106,13 +113,13 @@ void saveToEEPROM() {
 
 void displayParameters(float voltage, float current, float tempC, float humid, int soc) {
   tft1.fillScreen(ILI9341_BLACK);
-  tft1.setCursor(10, 20);  tft1.printf("Voltage: %.2f V", voltage);
-  tft1.setCursor(10, 50);  tft1.printf("Current: %.2f A", current);
-  tft1.setCursor(10, 80);  tft1.printf("Temp: %.1f C", tempC);
-  tft1.setCursor(10, 110); tft1.printf("Humidity: %.1f %%", humid);
-  tft1.setCursor(10, 140); tft1.printf("SOC: %d %%", soc);
-  tft1.setCursor(10, 170); tft1.printf("Cycles: %d", cycleCount);
-  tft1.setCursor(10, 200); tft1.printf("Health: %.1f %%", batteryHealth);
+  tft1.setCursor(10, 20);  tft1.print("Voltage: "); tft1.print(voltage); tft1.println(" V");
+  tft1.setCursor(10, 50);  tft1.print("Current: "); tft1.print(current); tft1.println(" A");
+  tft1.setCursor(10, 80);  tft1.print("Temp: "); tft1.print(tempC); tft1.println(" C");
+  tft1.setCursor(10, 110); tft1.print("Humidity: "); tft1.print(humid); tft1.println(" %");
+  tft1.setCursor(10, 140); tft1.print("SOC: "); tft1.print(soc); tft1.println(" %");
+  tft1.setCursor(10, 170); tft1.print("Cycles: "); tft1.println(cycleCount);
+  tft1.setCursor(10, 200); tft1.print("Health: "); tft1.print(batteryHealth); tft1.println(" %");
 }
 
 void displayAlerts(float voltage, float tempC, float humid) {
@@ -122,15 +129,15 @@ void displayAlerts(float voltage, float tempC, float humid) {
 
   if (tempC > 45) {
     tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
-    tft2.println("\nALERT: Overheat!");
+    tft2.println("ALERT: Overheat!");
   }
   if (voltage < lowVoltage) {
     tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
-    tft2.println("\nALERT: Low Voltage!");
+    tft2.println("ALERT: Low Voltage!");
   }
   if (humid > 90) {
     tft2.setTextColor(ILI9341_RED, ILI9341_BLACK);
-    tft2.println("\nALERT: High Humidity!");
+    tft2.println("ALERT: High Humidity!");
   }
 
   // If no alerts
@@ -138,6 +145,29 @@ void displayAlerts(float voltage, float tempC, float humid) {
     tft2.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
     tft2.println("All Systems Normal");
   }
+
+  // Show driver behavior
+  tft2.setCursor(10, 120);
+  tft2.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+  tft2.println("Driver Behavior:");
+  tft2.setCursor(10, 150); tft2.print("Accel: "); tft2.println(harshAccelCount);
+  tft2.setCursor(10, 170); tft2.print("Brake: "); tft2.println(harshBrakeCount);
+  tft2.setCursor(10, 190); tft2.print("Overspeed: "); tft2.println(overspeedCount);
+}
+
+void detectDriverBehavior(float current, float voltage) {
+  unsigned long now = millis();
+  if (now - lastDriverUpdate < 1000) return; // update every sec
+  lastDriverUpdate = now;
+
+  float deltaCurrent = current - lastCurrent;
+  lastCurrent = current;
+
+  if (deltaCurrent > 5.0) harshAccelCount++;
+  if (deltaCurrent < -5.0) harshBrakeCount++;
+
+  // Fake overspeed detection (SOC + voltage relation)
+  if (voltage > 12.5) overspeedCount++;
 }
 
 void loop() {
@@ -161,6 +191,9 @@ void loop() {
     measuredCapacity = 0;
   }
   lastSOC = soc;
+
+  // Driver behavior check
+  detectDriverBehavior(current, voltage);
 
   // Update displays
   displayParameters(voltage, current, tempC, humid, soc);
