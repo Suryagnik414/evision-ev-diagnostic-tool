@@ -80,8 +80,6 @@ This ensures:
 ```
 EV-Diagnostic-Tool/
 │── src/             # Arduino/ESP32 source code
-│── Hardware/         # Circuit diagrams, sensor connections
-│── Simulation/       # Wokwi simulation files
 │── Docs/             # Project report & documentation
 │── README.md         # Project documentation file
 ```
@@ -90,7 +88,7 @@ EV-Diagnostic-Tool/
 
 ## 📷 Screenshots / Demo  
 - **GitHub Repo:** https://github.com/Suryagnik414/evision-ev-diagnostic-tool
-- **YouTube Demo:** [Add link here]  
+- **YouTube Demo:** uploading soon
   
 
 ---
