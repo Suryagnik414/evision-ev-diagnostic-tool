@@ -1,8 +1,4 @@
-/***************************************************
-   IoT EV Diagnostic Tool - ESP32 + Dual ILI9341 TFT
-   TFT1: Parameters
-   TFT2: Alerts + Driver Behavior
-***************************************************/
+
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
